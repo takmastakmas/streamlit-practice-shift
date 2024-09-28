@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import pulp
-import japanize_matplotlib
+#import japanize_matplotlib
 
 class ShiftScheduler():
 
