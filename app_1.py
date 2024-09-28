@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import pulp
-#import japanize_matplotlib
+import japanize_matplotlib
 
 class ShiftScheduler():
 
@@ -31,7 +31,7 @@ class ShiftScheduler():
         self.sch_df = None # シフト表を表すデータフレーム
         
         
-    def set_data(self, staff_df, calendar_df):
+    def set_data(self, staff_df, calendar_df, penalty_a, ngdate):
         # リストの設定
         self.S = staff_df["スタッフID"].tolist()
         self.D = calendar_df["日付"].tolist()
@@ -46,6 +46,9 @@ class ShiftScheduler():
         D2Dic = calendar_df.set_index("日付").to_dict()
         self.D2required_staff = D2Dic["出勤人数"]
         self.D2required_leader = D2Dic["責任者人数"]
+        
+        self.penalty_a = penalty_a
+        self.S2ng_date = ngdate
 
 
     def show(self):
@@ -85,10 +88,18 @@ class ShiftScheduler():
         # 各日に対して、必要なリーダーの人数がシフトに入る
         for d in self.D:
             self.model += pulp.lpSum(self.x[s, d] * self.S2leader_flag[s] for s in self.S) >= self.D2required_leader[d]
-            
+        
+        # 希望休暇の制約
+        for s in self.S:
+            if self.S2ng_date[s] != "すべてOK":
+                for d in self.D:
+                    if d == self.S2ng_date[s]:
+                        self.model += self.x[s, d] == 0
+        
         ### 目的関数とスラック変数の定義 ###
         # 各スタッフの勤務希望日数の不足数と超過数を最小化する
-        self.model += pulp.lpSum([self.y_under[s] for s in self.S]) + pulp.lpSum([self.y_over[s] for s in self.S])
+        # self.model += pulp.lpSum([self.y_under[s] for s in self.S]) + pulp.lpSum([self.y_over[s] for s in self.S])
+        self.model += pulp.lpSum([self.penalty_a[s] * self.y_under[s] for s in self.S]) + pulp.lpSum([self.penalty_a[s] * self.y_over[s] for s in self.S])
         
         # 各スタッフに対して、y_under[s]は勤務希望日数の不足数を表す
         for s in self.S:
@@ -134,19 +145,38 @@ with tab1:
 
 with tab2:
     if uploaded_st_file is not None:
-      staff_df = pd.read_csv(uploaded_st_file)
-      st.markdown("## スタッフ情報")
-      st.write(staff_df)
+        staff_df = pd.read_csv(uploaded_st_file)
+        st.markdown("## スタッフ情報")
+        st.write(staff_df)
+        st.markdown("## 休暇希望")
+        staff_list = staff_df['スタッフID'].tolist()
+        ngdate = {}
+        for staff in staff_list:
+            st.write(f"スタッフID: {staff}")
+            ngdate[staff] = st.radio(
+                staff,
+                ["すべてOK"] + [
+                    calendar_df.loc[j, "日付"]
+                    for j in range(calendar_df.shape[0])
+                ],
+                horizontal=True,
+            )
     else:
       st.info('スタッフ情報をアップロードしてください')
 
 with tab3:
     if uploaded_st_file is not None and uploaded_cal_file is not None:
+        staff_list = staff_df['スタッフID'].tolist()
+        penalty_a = {}
+        for staff in staff_list:
+            st.write(f"スタッフID: {staff}")
+            penalty_a[staff] = st.slider(f"スタッフ{staff}の希望違反ペナルティ", 0, 100, 50, key=f"penalty_{staff}")
+            
         if st.button('最適化実行'):
             st.write('シフト表を作成しました')
             st.markdown("## 最適化結果")
             shift_sch = ShiftScheduler()
-            shift_sch.set_data(staff_df, calendar_df)
+            shift_sch.set_data(staff_df, calendar_df, penalty_a, ngdate)
             shift_sch.build_model()
             shift_sch.solve()
             st.write('実行ステータス:', pulp.LpStatus[shift_sch.status])
